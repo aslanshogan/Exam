@@ -3,7 +3,7 @@ import { computeExamWarnings, QuestionPoolStats } from "./examValidation";
 import type { ExamSettings } from "./types";
 
 // Fisher-Yates shuffle, in place
-function shuffle<T>(arr: T[]): void {
+export function shuffle<T>(arr: T[]): void {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
@@ -314,6 +314,75 @@ export async function snapshotQuestions(questionIds: string[]): Promise<Question
       explanation: q.explanation,
     };
   });
+}
+
+/**
+ * buildExamAttemptQuestions
+ * ---------------------------------------------------------------------
+ * The single function both /api/exam/start and /api/exam/preview-start
+ * call to get a ready-to-insert array of exam_attempt_questions rows.
+ *
+ * If `assignedTemplateId` is set (a trainee has been assigned a shared
+ * exam via "Same Exam for Multiple Trainees" — see /admin/exam-templates),
+ * returns THAT template's exact snapshotted questions — same content
+ * for every trainee assigned to it, optionally shuffled in order per
+ * trainee if the template's shuffle_order_per_trainee flag is on.
+ * Otherwise, falls back to the normal fresh-random buildRandomExam().
+ */
+export type AttemptQuestionRow = {
+  question_number: number;
+  question_id: string | null;
+  category_name: string;
+  question_text: string;
+  answer_a: string;
+  answer_b: string;
+  answer_c: string;
+  answer_d: string;
+  correct_answer: string;
+  explanation: string | null;
+};
+
+export async function buildExamAttemptQuestions(assignedTemplateId: string | null): Promise<AttemptQuestionRow[]> {
+  if (assignedTemplateId) {
+    const supabase = supabaseAdmin();
+    const { data: templateRows, error } = await supabase
+      .from("exam_template_questions")
+      .select("question_number, question_id, category_name, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer, explanation")
+      .eq("template_id", assignedTemplateId)
+      .order("question_number", { ascending: true });
+    if (error) throw new Error(`Failed to load assigned exam template: ${error.message}`);
+    if (!templateRows || templateRows.length === 0) {
+      throw new Error("Your assigned exam template has no questions — contact your administrator.");
+    }
+
+    const { data: template } = await supabase
+      .from("exam_templates")
+      .select("shuffle_order_per_trainee")
+      .eq("id", assignedTemplateId)
+      .maybeSingle();
+
+    let ordered = templateRows;
+    if (template?.shuffle_order_per_trainee) {
+      ordered = [...templateRows];
+      shuffle(ordered);
+    }
+    return ordered.map((r, idx) => ({ ...r, question_number: idx + 1 }));
+  }
+
+  const questionIds = await buildRandomExam();
+  const snapshots = await snapshotQuestions(questionIds);
+  return snapshots.map((snap, idx) => ({
+    question_number: idx + 1,
+    question_id: snap.question_id,
+    category_name: snap.category_name,
+    question_text: snap.question_text,
+    answer_a: snap.answer_a,
+    answer_b: snap.answer_b,
+    answer_c: snap.answer_c,
+    answer_d: snap.answer_d,
+    correct_answer: snap.correct_answer,
+    explanation: snap.explanation,
+  }));
 }
 
 /**

@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
 import AdminSidebar from "@/components/AdminSidebar";
 import { computeExamWarnings, QuestionPoolStats } from "@/lib/examValidation";
 import type { ExamSettings } from "@/lib/types";
 
 export default function AdminExamSettingsPage() {
+  const router = useRouter();
   const [settings, setSettings] = useState<ExamSettings | null>(null);
   const [stats, setStats] = useState<QuestionPoolStats | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
 
   useEffect(() => {
     fetch("/api/admin/exam-settings")
@@ -20,6 +23,19 @@ export default function AdminExamSettingsPage() {
         setStats(d.stats);
       });
   }, []);
+
+  async function previewExam() {
+    setPreviewing(true);
+    setMessage(null);
+    const res = await fetch("/api/exam/preview-start", { method: "POST" });
+    const data = await res.json();
+    setPreviewing(false);
+    if (!res.ok) {
+      setMessage(data.error || "Could not start a preview exam.");
+      return;
+    }
+    router.push(`/exam?attempt=${data.attemptId}`);
+  }
 
   async function save() {
     if (!settings) return;
@@ -62,20 +78,38 @@ export default function AdminExamSettingsPage() {
 
           {/* ---- Live validation preview --------------------------- */}
           <div className={`rounded-lg px-4 py-3 text-sm space-y-1 ${preview.canBuild ? "bg-brandGreen/10 text-brandGreen-700" : "bg-red-50 text-red-700 border border-red-200"}`}>
-            <p className="font-semibold">
-              {preview.canBuild ? "✅ This configuration can build a full exam." : "⚠ This configuration CANNOT currently build a full exam."}
-            </p>
-            <p>
-              Mandatory (always-include): <strong>{preview.mandatoryCount}</strong> · Random fill needed:{" "}
-              <strong>{preview.remainingNeeded}</strong> · Available for random fill:{" "}
-              <strong>{preview.totalAvailableForRemaining}</strong>
-            </p>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="font-semibold">
+                  {preview.canBuild ? "✅ This configuration can build a full exam." : "⚠ This configuration CANNOT currently build a full exam."}
+                </p>
+                <p>
+                  Mandatory (always-include): <strong>{preview.mandatoryCount}</strong> · Random fill needed:{" "}
+                  <strong>{preview.remainingNeeded}</strong> · Available for random fill:{" "}
+                  <strong>{preview.totalAvailableForRemaining}</strong>
+                </p>
+              </div>
+              {preview.canBuild && (
+                <button
+                  onClick={previewExam}
+                  disabled={previewing}
+                  className="flex-shrink-0 bg-navy-900 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-navy-700 disabled:opacity-60"
+                >
+                  {previewing ? "Generating..." : "▶ Preview This Exam"}
+                </button>
+              )}
+            </div>
             {preview.warnings.map((w, i) => (
               <p key={i} className={w.level === "error" ? "text-red-700" : "text-amber-700"}>
                 {w.level === "error" ? "✖" : "⚠"} {w.message}
               </p>
             ))}
           </div>
+          <p className="text-xs text-gray-400 -mt-2">
+            "Preview This Exam" generates a real exam under your own account using these settings,
+            so you can actually take it and confirm it works. Trainees never see this button — they
+            use Start Exam on the Home page, which is what counts toward their attempt limit.
+          </p>
 
           <div className="card p-5 space-y-5 max-w-2xl">
             <div className="grid md:grid-cols-2 gap-4">

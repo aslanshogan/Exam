@@ -323,6 +323,43 @@ actually clicks Start Exam.
   anywhere) — see the "MIGRATING FROM v2" note at the bottom of
   `supabase/schema.sql` if you customized them previously.
 
+## 9c. Previewing the exam as an admin
+
+The Home page's "Start Exam" button only appears for **trainees** —
+admins are redirected to the dashboard, so there's a separate way to
+test the exam yourself: the **"▶ Preview This Exam"** button at the top
+of `/admin/exam-settings` (visible whenever the configuration can build
+a valid exam). It generates a real exam under your own account using
+the current settings and drops you straight into it, so you can confirm
+end-to-end that questions appear and the flow works. Preview attempts
+show up on the Results pages with a "(Preview)" suffix on the name;
+delete them from `/admin/data` or the Results page if you don't want
+them in your stats. This does NOT count against any trainee's attempts.
+
+## 9d. Same exam for multiple trainees (`/admin/exam-templates`)
+
+By default every trainee gets a freshly randomized exam. If instead you
+want a whole group to sit the **exact same** questions (e.g. a fair,
+comparable cohort exam):
+
+1. Go to **Admin → "Same Exam for Many"**.
+2. Give the shared exam a name and click **Generate** — this builds one
+   question set right now using your current Exam Settings and snapshots
+   it permanently (editing or deleting those questions later in the
+   bank won't change this saved exam).
+3. Click **Assign** on that template, tick the trainees who should get
+   it, and **Save Assignment**.
+4. Those trainees now receive this exact question set the next time they
+   click Start Exam. Optionally tick "Shuffle order per trainee" when
+   creating it so everyone gets the same questions but in a different
+   order (mild anti-copying without changing fairness).
+
+Unassigned trainees keep getting fresh random exams. Deleting a template
+safely reverts anyone assigned to it back to random generation. Backed
+by two new tables (`exam_templates`, `exam_template_questions`) plus
+`exam_access.assigned_template_id` — all created by re-running
+`supabase/schema.sql`.
+
 ## 10. Audit log
 
 Every meaningful admin action is recorded in `audit_logs`: user created
@@ -493,12 +530,47 @@ itself is gone.
 
 ---
 
+## 12b. Troubleshooting common setup problems
+
+**"Not authenticated" / "No matching row in profiles" when you try to
+add users, change settings, etc. (even though you're logged in).** This
+is almost always an incomplete bootstrap, and the app now tells you
+which: the error message itself will say whether it's a missing session
+or a missing `profiles` row. The usual cause is that the Supabase Auth
+user was created but the matching `profiles` + `exam_access` rows were
+never inserted (or were inserted with a different email). Fix: in
+Supabase SQL Editor run `select * from profiles where email =
+'your@email.com';` — if it returns nothing, re-run the bootstrap insert
+from section 2 with the exact email you logged in with.
+
+**No questions, no categories, and no way to generate an exam.** These
+all share one root cause: questions were never successfully imported.
+Open `/admin/questions` — if it's empty, import your bank on
+`/admin/import` and check the import report for how many actually
+imported (vs were skipped). Categories are auto-created from your Excel
+sheet tabs during import, so "no categories" also means "import hasn't
+succeeded yet." Once questions exist, generate/preview an exam with the
+"▶ Preview This Exam" button on `/admin/exam-settings` (admins don't see
+the trainee Home page's Start button — see section 9c).
+
+**Exam settings "not working."** Check the colored box at the top of
+`/admin/exam-settings`: if it's red, it tells you exactly why an exam
+can't be built yet (usually not enough active questions, or more
+always-include questions than the total size). Settings save fine; the
+box reflects whether the current question bank can satisfy them.
+
+**Excel import shows many "incomplete / missing option" errors.** See
+section 7 — some are genuinely open-ended questions in your source that
+have no A/B/C/D options and can't become multiple-choice; others can be
+a formatting quirk the parser can't read. The report now names exactly
+what's missing per row so you can fix the source spreadsheet and
+re-import.
+
 ## 13. Known limitations
 
 - **Fixed (read if you have an older copy of this project):** `lib/codeSession.ts` previously used Node's built-in `crypto` module (`createHmac`, `timingSafeEqual`) and `Buffer`. Those are unavailable in Vercel's **Edge Runtime**, which is what `middleware.ts` runs on by default — this would have broken access-code login (and possibly the whole middleware) once deployed to Vercel, even though it worked fine in local `npm run dev`. It now uses the Web Crypto API (`crypto.subtle`) instead, which works identically in both the Edge Runtime and Node.js 20+. This is also why Node 20 LTS is a hard requirement, not just a suggestion — see section 3.1 of `INSTALL_GUIDE.md`.
 
 - Permission overrides (`user_permissions`) are SQL-only — no admin UI yet.
-- Hard-deleting a user is API-only (not exposed as a button) — deactivate is the supported UI path.
 - The "Preview Theme" button in the theme editor shows a sample card/button, not a full live page preview — open the relevant user's Home/Exam page in another tab after saving for a true preview.
 - Background-video bandwidth isn't adaptive; keep files reasonably small (well under the 80MB cap) for trainees on slow connections.
 - In "Fixed Category Rules" mode, if category rule totals don't match "Total Exam Questions," the engine trims/tops up randomly to hit the exact total — the resulting category balance may drift slightly from your rules. Switch to "Auto-Distribute" if exact total size matters more than exact per-category counts.

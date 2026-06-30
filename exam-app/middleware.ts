@@ -80,6 +80,7 @@ export async function middleware(req: NextRequest) {
       pathname.startsWith("/admin/themes") ||
       pathname.startsWith("/admin/audit") ||
       pathname.startsWith("/admin/exam-settings") ||
+      pathname.startsWith("/admin/exam-templates") ||
       pathname.startsWith("/admin/data")
     ) {
       if (profile.role_id !== "super_admin") {

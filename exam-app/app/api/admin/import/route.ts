@@ -13,8 +13,24 @@ import * as XLSX from "xlsx";
  * → Import page can render it immediately without a server restart.
  */
 
+// Hebrew/RTL Excel exports frequently embed invisible Unicode
+// bidi-control characters (RLM, LRM, and similar) around text — these
+// are invisible when you LOOK at the cell but break regex matching
+// since they sit between characters our patterns expect to be
+// adjacent (e.g. right after an option letter). Strip them from every
+// cell before any pattern matching.
+const BIDI_MARKS_RE = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+function cleanCell(v: string): string {
+  return v.replace(BIDI_MARKS_RE, "").trim();
+}
+
 const OPT_RE = /^\s*([A-Dא-ד])[).]\s*(.+)$/;
-const ANS_RE = /(answer|correct answer|תשובה)\s*[:\-]?\s*([A-Dא-ד])/i;
+// Looks for an answer-keyword, then an option letter within a SHORT
+// gap after it — not necessarily immediately adjacent, so phrasings
+// like "Correct answer is: C" or "התשובה הנכונה היא ג" (extra words
+// between the keyword and the actual letter) still match, not just
+// the keyword followed directly by the letter.
+const ANS_RE = /(?:correct\s*answer|answer|תשובה\s*נכונה|תשובה)[^A-Dא-ד\n]{0,25}([A-Dא-ד])\b/i;
 const EXPL_RE = /^(explanation|הסבר)\s*[:\-]?\s*(.*)$/i;
 const NUM_PREFIX_RE = /^\s*\d+[).]\s*/;
 const HEB_MAP: Record<string, string> = { "א": "A", "ב": "B", "ג": "C", "ד": "D" };
@@ -45,16 +61,27 @@ function parseWorkbook(buf: ArrayBuffer) {
     const flush = (rowNum: number) => {
       if (curQ && Object.keys(opts).length >= 2) {
         if (!opts["A"] || !opts["B"] || !correct) {
-          problems.push(`[${sheetName}] row ~${rowNum}: incomplete (missing A/B or correct answer) — "${curQ.slice(0, 60)}"`);
+          const missing: string[] = [];
+          if (!opts["A"]) missing.push("option A");
+          if (!opts["B"]) missing.push("option B");
+          if (!opts["C"]) missing.push("option C");
+          if (!opts["D"]) missing.push("option D");
+          if (!correct) missing.push("a recognizable correct-answer line");
+          problems.push(`[${sheetName}] row ~${rowNum}: missing ${missing.join(", ")} — "${curQ.slice(0, 60)}"`);
         } else {
           parsed.push({ category: sheetName.trim(), question: curQ.replace(NUM_PREFIX_RE, "").trim(), a: opts["A"] || "", b: opts["B"] || "", c: opts["C"] || "", d: opts["D"] || "", correct, explanation, hint: `${sheetName}!row${rowNum}` });
         }
+      } else if (curQ) {
+        // Fewer than 2 options were recognized at all — previously
+        // dropped with NO explanation. Now reported so nothing
+        // disappears silently.
+        problems.push(`[${sheetName}] row ~${rowNum}: only recognized ${Object.keys(opts).length} answer option(s) (need at least 2) — "${curQ.slice(0, 60)}"`);
       }
       curQ = null; opts = {}; correct = ""; explanation = "";
     };
 
     rows.forEach((row, idx) => {
-      const vals = (row || []).map((v) => (v ?? "").toString().trim()).filter((v) => v !== "");
+      const vals = (row || []).map((v) => cleanCell((v ?? "").toString())).filter((v) => v !== "");
       if (vals.length === 0) return;
       const leftovers: string[] = [];
       for (const v of vals) {
@@ -62,7 +89,7 @@ function parseWorkbook(buf: ArrayBuffer) {
         const mOpt = v.match(OPT_RE);
         const mExpl = v.match(EXPL_RE);
         if (mAns) {
-          const letter = mAns[2].toUpperCase();
+          const letter = mAns[1].toUpperCase();
           correct = HEB_MAP[letter] || letter;
         } else if (mOpt) {
           let letter = mOpt[1];

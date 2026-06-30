@@ -31,6 +31,7 @@ export default function AdminSidebar() {
   if (role === "super_admin") {
     links.push(
       { href: "/admin/exam-settings", label: "Exam Settings" },
+      { href: "/admin/exam-templates", label: "Same Exam for Many" },
       { href: "/admin/users", label: "Users" },
       { href: "/admin/themes", label: "Themes" },
       { href: "/admin/data", label: "Data Management" },

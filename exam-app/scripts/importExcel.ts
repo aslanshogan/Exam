@@ -75,8 +75,13 @@ type ParsedQuestion = {
   sourceRowHint: string;
 };
 
+const BIDI_MARKS_RE = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+function cleanCell(v: string): string {
+  return v.replace(BIDI_MARKS_RE, "").trim();
+}
+
 const OPT_RE = /^\s*([A-Dא-ד])[).]\s*(.+)$/;
-const ANS_RE = /(answer|correct answer|תשובה)\s*[:\-]?\s*([A-Dא-ד])/i;
+const ANS_RE = /(?:correct\s*answer|answer|תשובה\s*נכונה|תשובה)[^A-Dא-ד\n]{0,25}([A-Dא-ד])\b/i;
 const EXPL_RE = /^(explanation|הסבר)\s*[:\-]?\s*(.*)$/i;
 const NUM_PREFIX_RE = /^\s*\d+[).]\s*/;
 const HEB_MAP: Record<string, string> = { "א": "A", "ב": "B", "ג": "C", "ד": "D" };
@@ -122,7 +127,7 @@ function parseWorkbook(filePath: string): { parsed: ParsedQuestion[]; problems: 
     };
 
     rows.forEach((row, idx) => {
-      const vals = (row || []).map((v) => (v ?? "").toString().trim()).filter((v) => v !== "");
+      const vals = (row || []).map((v) => cleanCell((v ?? "").toString())).filter((v) => v !== "");
       if (vals.length === 0) return;
 
       const leftovers: string[] = [];
@@ -131,7 +136,7 @@ function parseWorkbook(filePath: string): { parsed: ParsedQuestion[]; problems: 
         const mOpt = v.match(OPT_RE);
         const mExpl = v.match(EXPL_RE);
         if (mAns) {
-          const letter = mAns[2].toUpperCase();
+          const letter = mAns[1].toUpperCase();
           correct = HEB_MAP[letter] || letter;
         } else if (mOpt) {
           let letter = mOpt[1];

@@ -283,6 +283,43 @@ create or replace function increment_attempts_used(p_user_id uuid) returns void 
 $$ language sql security definer;
 
 -- =====================================================================
+-- EXAM TEMPLATES — "give the same exam to multiple trainees." A
+-- Super Admin generates ONE question set (using the normal engine —
+-- same always-include + selection-mode logic as everything else), it's
+-- snapshotted here exactly like exam_attempt_questions, and then
+-- assigned to one or more trainees via exam_access.assigned_template_id.
+-- When an assigned trainee clicks Start Exam, they get THIS exact
+-- question set instead of a fresh random one (see /api/exam/start).
+-- =====================================================================
+create table if not exists exam_templates (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  created_by uuid references profiles(id) on delete set null,
+  shuffle_order_per_trainee boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists exam_template_questions (
+  template_id uuid not null references exam_templates(id) on delete cascade,
+  question_number int not null,
+  question_id uuid references questions(id) on delete set null,
+  category_name text not null,
+  question_text text not null,
+  answer_a text not null,
+  answer_b text not null,
+  answer_c text not null,
+  answer_d text not null,
+  correct_answer text not null check (correct_answer in ('A','B','C','D')),
+  explanation text,
+  primary key (template_id, question_number)
+);
+create index if not exists idx_etq_template on exam_template_questions(template_id);
+
+-- Points a trainee at a specific template instead of fresh-random
+-- generation. NULL (the default) = normal random behavior, unchanged.
+alter table exam_access add column if not exists assigned_template_id uuid references exam_templates(id) on delete set null;
+
+-- =====================================================================
 -- HELPER FUNCTIONS — role & permission checks (used by RLS policies)
 -- =====================================================================
 create or replace function my_profile() returns profiles as $$
@@ -336,6 +373,8 @@ alter table app_settings enable row level security;
 alter table exam_settings enable row level security;
 alter table exam_attempts enable row level security;
 alter table exam_attempt_questions enable row level security;
+alter table exam_templates enable row level security;
+alter table exam_template_questions enable row level security;
 alter table exam_answers enable row level security;
 
 -- ---- profiles -----------------------------------------------------
@@ -472,6 +511,15 @@ create policy "answers_write_own" on exam_answers for all
       where a.id = attempt_id and p.auth_user_id = auth.uid()
     )
   );
+
+-- ---- exam_templates / exam_template_questions: Super Admin only -----
+drop policy if exists "templates_super_admin_only" on exam_templates;
+create policy "templates_super_admin_only" on exam_templates for all
+  using (is_super_admin()) with check (is_super_admin());
+
+drop policy if exists "template_questions_super_admin_only" on exam_template_questions;
+create policy "template_questions_super_admin_only" on exam_template_questions for all
+  using (is_super_admin()) with check (is_super_admin());
 
 -- =====================================================================
 -- STORAGE BUCKETS + POLICIES

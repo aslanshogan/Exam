@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getCurrentProfile } from "@/lib/auth";
-import { buildRandomExam, loadExamSettings, snapshotQuestions } from "@/lib/examEngine";
+import { loadExamSettings, buildExamAttemptQuestions } from "@/lib/examEngine";
 
 export async function POST(req: NextRequest) {
   const profile = await getCurrentProfile(req);
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
 
   const { data: access } = await supabase
     .from("exam_access")
-    .select("allowed_to_take, allow_retake, max_attempts, attempts_used")
+    .select("allowed_to_take, allow_retake, max_attempts, attempts_used, assigned_template_id")
     .eq("user_id", profile.id)
     .maybeSingle();
 
@@ -27,18 +27,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "You have already used your exam attempt." }, { status: 403 });
   }
 
-  let questionIds: string[];
+  // If a Super Admin has assigned this trainee a shared exam template
+  // ("Same Exam for Multiple Trainees" — /admin/exam-templates), this
+  // returns THAT exact question set instead of a fresh random one.
+  let rows;
   try {
-    questionIds = await buildRandomExam();
+    rows = await buildExamAttemptQuestions(access.assigned_template_id ?? null);
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 422 });
-  }
-
-  let snapshots;
-  try {
-    snapshots = await snapshotQuestions(questionIds);
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
   }
 
   const { data: attempt, error: attemptErr } = await supabase
@@ -50,23 +46,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: attemptErr?.message || "Could not create attempt." }, { status: 500 });
   }
 
-  const rows = snapshots.map((snap, idx) => ({
-    attempt_id: attempt.id,
-    question_number: idx + 1,
-    question_id: snap.question_id,
-    category_name: snap.category_name,
-    question_text: snap.question_text,
-    answer_a: snap.answer_a,
-    answer_b: snap.answer_b,
-    answer_c: snap.answer_c,
-    answer_d: snap.answer_d,
-    correct_answer: snap.correct_answer,
-    explanation: snap.explanation,
-  }));
-  const { error: eaqErr } = await supabase.from("exam_attempt_questions").insert(rows);
+  const insertRows = rows.map((r) => ({ ...r, attempt_id: attempt.id }));
+  const { error: eaqErr } = await supabase.from("exam_attempt_questions").insert(insertRows);
   if (eaqErr) {
     return NextResponse.json({ error: eaqErr.message }, { status: 500 });
   }
 
-  return NextResponse.json({ attemptId: attempt.id, totalQuestions: rows.length });
+  return NextResponse.json({ attemptId: attempt.id, totalQuestions: insertRows.length });
 }
