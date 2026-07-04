@@ -1,0 +1,183 @@
+# Unit Function Exam — Setup & Deployment Guide
+
+A Next.js + TypeScript + Supabase + Tailwind training exam app, styled in a
+GE Vernova–inspired professional theme (navy / teal / green accent), with a
+lightweight 3D turbine hero, full trainee exam flow, and an admin dashboard
+for question/category/result management and Excel import.
+
+---
+
+## 1. Project structure
+
+```
+exam-app/
+├── app/
+│   ├── page.tsx                       Home / Start Exam ("/")
+│   ├── layout.tsx, globals.css
+│   ├── exam/page.tsx                  Active exam ("/exam")
+│   ├── result/[attemptId]/page.tsx    Final score screen
+│   ├── admin/
+│   │   ├── page.tsx                   Dashboard ("/admin")
+│   │   ├── login/page.tsx
+│   │   ├── questions/page.tsx         Question bank management
+│   │   ├── categories/page.tsx        Categories & rules
+│   │   ├── results/page.tsx           All results + filters + CSV export
+│   │   ├── results/[attemptId]/page.tsx  Detailed answers for one attempt
+│   │   └── import/page.tsx            Excel import UI
+│   └── api/
+│       ├── exam/start, question, answer, submit   (trainee exam engine)
+│       └── admin/login, questions, categories, import, results/export
+├── components/    Header, Logo, TurbineHero3D, QuestionCard, AnswerOption,
+│                  ProgressBar, AdminSidebar, StatCard, ResultsTable,
+│                  CategoryStatusTable, ImportReport
+├── lib/           supabaseClient.ts, supabaseAdmin.ts, examEngine.ts,
+│                  requireAdmin.ts, types.ts
+├── scripts/       importExcel.ts   (CLI import tool)
+├── supabase/      schema.sql       (tables + indexes + RLS policies)
+├── middleware.ts  protects /admin/* routes
+├── public/        put logo.svg/png, turbine.glb, fonts/ here
+├── data/          put source-questions.xlsx here for CLI import
+└── .env.local.example
+```
+
+---
+
+## 2. Supabase setup
+
+1. Create a project at supabase.com.
+2. Go to **SQL Editor → New query**, paste the entire contents of
+   `supabase/schema.sql`, and run it. This creates every table (profiles,
+   categories, questions, category_rules, app_settings, exam_attempts,
+   exam_attempt_questions, exam_answers), all indexes/relationships, and
+   Row Level Security policies.
+3. Go to **Project Settings → API** and copy:
+   - Project URL → `NEXT_PUBLIC_SUPABASE_URL`
+   - `anon` public key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `service_role` key → `SUPABASE_SERVICE_ROLE_KEY` (keep this secret —
+     server-only, never shipped to the browser)
+
+---
+
+## 3. Local setup
+
+```bash
+cd exam-app
+npm install
+cp .env.local.example .env.local
+# edit .env.local with your Supabase keys + a strong ADMIN_PASSWORD
+npm run dev
+```
+
+Open http://localhost:3000.
+
+### Admin access
+Go to `/admin/login` and enter the `ADMIN_PASSWORD` you set in `.env.local`.
+This is the "simple password protected admin" option from the brief —
+fast to set up, no user accounts needed. (If you later want real
+per-admin logins, the SQL schema already includes a `profiles.role =
+'admin'` path with matching RLS policies — wire up Supabase Auth and
+swap the `middleware.ts` check for a session lookup instead of the
+cookie check.)
+
+---
+
+## 4. Import your question bank
+
+**Option A — from the browser (recommended):**
+Go to `/admin/import`, upload your `.xlsx` file, click **Run Import**.
+You'll see a report: how many questions were parsed, how many were valid,
+how many were imported, every category found, and a list of any problem
+rows (missing options, unmatched correct answers, categories under 2
+questions). Fix problems in your source file and re-upload — re-importing
+only adds questions, it never deletes existing ones.
+
+**Option B — from the command line:**
+```bash
+mkdir -p data
+cp /path/to/your/file.xlsx data/source-questions.xlsx
+npm run import:excel
+```
+Review the generated `import-report.json` in the project root.
+
+> **Important — review correct answers.** Your original file had mixed
+> English/Hebrew formatting across its 25 category tabs, and a handful
+> of questions could not be parsed with full confidence (this is reported
+> explicitly, not silently guessed). After importing, check
+> `/admin/questions`, especially for any category flagged in the report,
+> and compare each `correct_answer` against its `explanation` before
+> trusting it for scoring.
+
+---
+
+## 5. Logo, font, and 3D model
+
+Drop these into `/public` (filenames are hardcoded, no code changes needed):
+
+| File | Purpose | If missing |
+|---|---|---|
+| `logo.svg` or `logo.png` | Header logo | Falls back to a clean "UNIT FUNCTION EXAM" text wordmark |
+| `turbine.glb` | 3D hero model | Falls back to an animated procedural placeholder turbine (cylinders/boxes), still professional-looking |
+| `fonts/your-font.woff2` | Brand font | Uncomment the `@font-face` block in `app/globals.css`; otherwise Inter/system font is used |
+
+No fake GE logo or font was created anywhere in this codebase — both are
+opt-in via these file drops only.
+
+---
+
+## 6. Deploying to Vercel
+
+1. Push this project to a GitHub repo.
+2. Go to vercel.com → **New Project** → import the repo.
+3. In **Environment Variables**, add the same 4 values from `.env.local`:
+   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+   `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_PASSWORD`.
+4. Deploy. Vercel auto-detects Next.js — no build config changes needed.
+5. After deploy, re-upload `logo.svg`/`turbine.glb` isn't needed if they're
+   already committed inside `/public` in your repo — Vercel deploys
+   `/public` as-is.
+
+---
+
+## 7. Adjusting the passing score / explanation visibility
+
+Both live in the `app_settings` table (single row, id = 1):
+```sql
+update app_settings set passing_score = 0.80, show_explanations_to_trainee = false;
+```
+There's no dedicated admin UI screen for this yet (the brief's other 20+
+features were prioritized) — adjust directly in Supabase's **Table
+Editor → app_settings**, or add a small settings form to
+`/admin` calling a new `/api/admin/settings` route following the same
+pattern as the other admin API routes.
+
+---
+
+## 8. Testing checklist
+
+- [ ] Run the SQL schema, confirm all 8 tables exist in Supabase Table Editor
+- [ ] Import your Excel file via `/admin/import`, confirm 25 categories appear
+- [ ] Check `/admin` dashboard — confirm every category shows "OK" (≥2 questions); fix any flagged as "NOT ENOUGH"
+- [ ] On `/`, enter a trainee name, click **Start Exam**
+- [ ] Confirm the exam has exactly 50 questions (`Question 1 of 50` ... `50 of 50`)
+- [ ] Answer a few, click **Back**, confirm your previous selections are still highlighted
+- [ ] Try **Submit** before answering everything — confirm it's blocked with a clear message
+- [ ] Answer all 50, submit, confirm the score screen shows correct %, correct/wrong counts, Pass/Fail
+- [ ] Check Supabase: a new row in `exam_attempts`, 50 rows in `exam_attempt_questions`, 50 rows in `exam_answers`
+- [ ] On `/admin/results`, confirm the new attempt appears; open it and confirm all 50 detailed answers are correct
+- [ ] Test filters (name / pass-fail / date range) and **Export CSV**
+- [ ] Test `/admin/questions` add/edit/delete, and `/admin/categories` add/edit-count/delete
+- [ ] Resize the browser to a phone width — confirm Home, Exam, and Admin pages remain usable
+- [ ] Confirm `/admin/*` redirects to `/admin/login` when not authenticated
+
+---
+
+## 9. Known limitations / what to harden before heavy production use
+
+- Admin auth is a single shared password (no per-admin accounts/audit
+  trail). Fine for a small training team; upgrade to Supabase Auth +
+  `profiles.role='admin'` for multi-admin accountability.
+- The 3D turbine placeholder is intentionally simple low-poly geometry,
+  not a realistic model — supply a real `.glb` for production polish.
+- Excel parsing is heuristic-based because the source file's 25 tabs use
+  inconsistent layouts; always review the import report before trusting
+  a freshly imported question bank in a real exam.
