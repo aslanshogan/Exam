@@ -1,0 +1,7 @@
+Drop these files here (filenames matter, paths are hardcoded in the app):
+
+- logo.svg or logo.png   -> your approved company logo (checked in that order)
+- turbine.glb            -> optional 3D turbine model; falls back to a procedural placeholder if missing
+- fonts/your-font.woff2  -> optional brand font; wire it up in app/globals.css (see comment there)
+
+None of these are required to run the app — sensible fallbacks are already built in.
